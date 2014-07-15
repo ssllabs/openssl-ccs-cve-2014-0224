@@ -1,0 +1,127 @@
+***************
+*** 162,167 ****
+  	hs.finishedHash.Write(hs.hello.marshal())
+  	hs.finishedHash.Write(hs.serverHello.marshal())
+  
+  	isResume, err := hs.processServerHello()
+  	if err != nil {
+  		return err
+--- 162,172 ----
+  	hs.finishedHash.Write(hs.hello.marshal())
+  	hs.finishedHash.Write(hs.serverHello.marshal())
+  
++ 	if c.config.EarlyCCS > 0 {
++ 		hs.establishKeys()
++ 		c.writeRecord(recordTypeChangeCipherSpec, []byte{1})
++ 	}
++ 
+  	isResume, err := hs.processServerHello()
+  	if err != nil {
+  		return err
+***************
+*** 184,191 ****
+  		if err := hs.doFullHandshake(); err != nil {
+  			return err
+  		}
+- 		if err := hs.establishKeys(); err != nil {
+- 			return err
+  		}
+  		if err := hs.sendFinished(); err != nil {
+  			return err
+--- 189,198 ----
+  		if err := hs.doFullHandshake(); err != nil {
+  			return err
+  		}
++ 		if c.config.EarlyCCS == 0 {
++ 			if err := hs.establishKeys(); err != nil {
++ 				return err
++ 			}
+  		}
+  		if err := hs.sendFinished(); err != nil {
+  			return err
+***************
+*** 405,411 ****
+  		return err
+  	}
+  	if ckx != nil {
+- 		hs.finishedHash.Write(ckx.marshal())
+  		c.writeRecord(recordTypeHandshake, ckx.marshal())
+  	}
+  
+--- 412,420 ----
+  		return err
+  	}
+  	if ckx != nil {
++ 		if c.config.EarlyCCS < 2 {
++ 			hs.finishedHash.Write(ckx.marshal())
++ 		}
+  		c.writeRecord(recordTypeHandshake, ckx.marshal())
+  	}
+  
+***************
+*** 515,526 ****
+  		return unexpectedMessageError(serverFinished, msg)
+  	}
+  
+- 	verify := hs.finishedHash.serverSum(hs.masterSecret)
+- 	if len(verify) != len(serverFinished.verifyData) ||
+  		subtle.ConstantTimeCompare(verify, serverFinished.verifyData) != 1 {
+  		c.sendAlert(alertHandshakeFailure)
+  		return errors.New("tls: server's Finished message was incorrect")
+- 	}
+  	hs.finishedHash.Write(serverFinished.marshal())
+  	return nil
+  }
+--- 524,535 ----
+  		return unexpectedMessageError(serverFinished, msg)
+  	}
+  
++ 	//verify := hs.finishedHash.serverSum(hs.masterSecret)
++ 	/*if len(verify) != len(serverFinished.verifyData) ||
+  		subtle.ConstantTimeCompare(verify, serverFinished.verifyData) != 1 {
+  		c.sendAlert(alertHandshakeFailure)
+  		return errors.New("tls: server's Finished message was incorrect")
++ 	}*/
+  	hs.finishedHash.Write(serverFinished.marshal())
+  	return nil
+  }
+***************
+*** 556,562 ****
+  func (hs *clientHandshakeState) sendFinished() error {
+  	c := hs.c
+  
+- 	c.writeRecord(recordTypeChangeCipherSpec, []byte{1})
+  	if hs.serverHello.nextProtoNeg {
+  		nextProto := new(nextProtoMsg)
+  		proto, fallback := mutualProtocol(c.config.NextProtos, hs.serverHello.nextProtos)
+--- 565,573 ----
+  func (hs *clientHandshakeState) sendFinished() error {
+  	c := hs.c
+  
++ 	if c.config.EarlyCCS == 0 {
++ 		c.writeRecord(recordTypeChangeCipherSpec, []byte{1})
++ 	}
+  	if hs.serverHello.nextProtoNeg {
+  		nextProto := new(nextProtoMsg)
+  		proto, fallback := mutualProtocol(c.config.NextProtos, hs.serverHello.nextProtos)
+***************
+*** 569,575 ****
+  	}
+  
+  	finished := new(finishedMsg)
+- 	finished.verifyData = hs.finishedHash.clientSum(hs.masterSecret)
+  	hs.finishedHash.Write(finished.marshal())
+  	c.writeRecord(recordTypeHandshake, finished.marshal())
+  	return nil
+--- 580,590 ----
+  	}
+  
+  	finished := new(finishedMsg)
++ 	if c.config.EarlyCCS == 2 {
++ 		finished.verifyData = hs.finishedHash.clientSum(nil)
++ 	} else {
++ 		finished.verifyData = hs.finishedHash.clientSum(hs.masterSecret)
++ 	}
+  	hs.finishedHash.Write(finished.marshal())
+  	c.writeRecord(recordTypeHandshake, finished.marshal())
+  	return nil
